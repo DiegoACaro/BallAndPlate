@@ -1,0 +1,32 @@
+{
+	"folders": [
+		{
+			"path": "../../../../Escritorio/Projects/PythonCodes/Otros"
+		},
+		{
+			"name": "BallAndPlate",
+			"path": "."
+		},
+		{
+			"name": "250426-133250-megaatmega2560",
+			"path": "../250426-133250-megaatmega2560"
+		},
+		{
+			"name": "PantallaTFT",
+			"path": "../PantallaTFT"
+		}
+	],
+	"settings": {
+		"files.associations": {
+			"i2c.h": "c",
+			"adc_continuous.h": "c",
+			"adc.h": "c",
+			"spi_master.h": "c",
+			"gpio.h": "c",
+			"map": "cpp",
+			"disp_driver.h": "c",
+			"touch_driver.h": "c",
+			"st7789.h": "c"
+		}
+	}
+}
