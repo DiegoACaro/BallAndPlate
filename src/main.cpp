@@ -9,7 +9,6 @@ extern "C"{
     #include "driver/adc.h" // joystick con driver/adc.h
     #include "driver/gpio.h" // Para el botón del joystick
 }
-#include "InverseKinematics.h" // Inverse Kinematics
 
 //------------------ DEBUG ----------------------
 #define DEBUG_SPI 0
@@ -20,7 +19,6 @@ extern "C"{
 #define INTERFAZ_COLOR_AZUL 0
 #define INTERFAZ_COLOR_ROJO 1
 #define INTERFAZ_COLOR_MORADO 0
-
 
 
 //SPI PINES
@@ -40,6 +38,9 @@ extern "C"{
 #include <fondo.cpp>
 
 TFT_eSPI tft = TFT_eSPI();  // Usa el setup del archivo User_Setup.h
+
+#include <InverseKinematics.h> // Inverse Kinematics
+
 
 //LVGL ----------------------------------
 

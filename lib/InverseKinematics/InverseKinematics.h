@@ -3,9 +3,9 @@
 #include "arduino.h"
 
 //constants
-#define A 0
-#define B 1
-#define C 2
+#define LINK_A 0
+#define LINK_B 1
+#define LINK_C 2
 
 class Machine { //machine class
   public:

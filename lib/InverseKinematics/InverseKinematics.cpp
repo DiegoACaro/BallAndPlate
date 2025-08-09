@@ -28,20 +28,20 @@ double Machine::theta(int leg, double hz, double nx, double ny) {
   nz = 1 / nmag;
   //calculates angle A, B, or C
   switch (leg) {
-    case A:  //Leg A
+    case LINK_A:  //Leg A
       y = d + (e / 2) * (1 - (pow(nx, 2) + 3 * pow(nz, 2) + 3 * nz) / (nz + 1 - pow(nx, 2) + (pow(nx, 4) - 3 * pow(nx, 2) * pow(ny, 2)) / ((nz + 1) * (nz + 1 - pow(nx, 2)))));
       z = hz + e * ny;
       mag = sqrt(pow(y, 2) + pow(z, 2));
       angle = acos(y / mag) + acos((pow(mag, 2) + pow(f, 2) - pow(g, 2)) / (2 * mag * f));
       break;
-    case B:  //Leg B
+    case LINK_B:  //Leg B
       x = (sqrt(3) / 2) * (e * (1 - (pow(nx, 2) + sqrt(3) * nx * ny) / (nz + 1)) - d);
       y = x / sqrt(3);
       z = hz - (e / 2) * (sqrt(3) * nx + ny);
       mag = sqrt(pow(x, 2) + pow(y, 2) + pow(z, 2));
       angle = acos((sqrt(3) * x + y) / (-2 * mag)) + acos((pow(mag, 2) + pow(f, 2) - pow(g, 2)) / (2 * mag * f));
       break;
-    case C:  //Leg C
+    case LINK_C:  //Leg C
       x = (sqrt(3) / 2) * (d - e * (1 - (pow(nx, 2) - sqrt(3) * nx * ny) / (nz + 1)));
       y = -x / sqrt(3);
       z = hz + (e / 2) * (sqrt(3) * nx - ny);
