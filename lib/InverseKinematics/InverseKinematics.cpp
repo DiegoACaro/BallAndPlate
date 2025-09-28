@@ -49,5 +49,7 @@ double Machine::theta(int leg, double hz, double nx, double ny) {
       angle = acos((sqrt(3) * x - y) / (2 * mag)) + acos((pow(mag, 2) + pow(f, 2) - pow(g, 2)) / (2 * mag * f));
       break;
   }
-  return (angle * (180 / PI));  //converts angle to degrees and returns the value
+  return angle;  //returns the angle in radians
+  
+  //return (angle * (180 / PI));  //converts angle to degrees and returns the value
 }

@@ -8,6 +8,7 @@ extern "C"{
     #include "esp_log.h" 
     #include "driver/adc.h" // joystick con driver/adc.h
     #include "driver/gpio.h" // Para el botón del joystick
+    #include <math.h>
 }
 
 //------------------ DEBUG ----------------------
@@ -77,6 +78,16 @@ typedef struct {
     float encoderZ;
 } Respuesta;
 
+struct DatosIK {
+    float nx;
+    float ny;
+    float hz;
+    float IKX;
+    float IKY;
+    float IKZ;
+};
+
+DatosIK datosIK;
 
 //Variables globales
 spi_device_handle_t spi_com;
@@ -109,6 +120,7 @@ enum Pantalla {
     MODO_MANUAL,
     DATOS_VARIABLES,
     GRAFICAS,
+    CINEMATICAINVERSA,
     APAGADO
 };
 Pantalla pantalla_actual = MENU_PRINCIPAL;
@@ -141,7 +153,7 @@ lv_obj_t *label;  // Global para modificarlo desde tareas
 
 // MENU PRINCIPAL -------------------
 lv_obj_t *menu_list;
-lv_obj_t *btn_opciones[5];
+lv_obj_t *btn_opciones[6];
 int opcion_actual = 0;
 
 
@@ -182,8 +194,17 @@ lv_timer_t * chart_timer = nullptr;
 lv_timer_t * circulo_timer = nullptr;
 int opcion_actual2 = 0;
 
+//CINEMATICA INVERSA
+lv_obj_t* label_nx = nullptr;
+lv_obj_t* label_ny = nullptr;
+lv_obj_t* label_hz = nullptr;
+lv_obj_t* label_output = nullptr;
+lv_timer_t* timer_IK = NULL;
 
 //-------------------------- PID --------------------------------------
+
+Machine machine(2.0, 3.56820, 1.25259, 3.0286); //INVERSE KINEMATICS
+
 float Kpa = 0.2, Kia = 0.1, Kda = 0.3;
 float Kpb = 0.05, Kib = 0.07, Kdb = 0.2;
 float Kpc = 0.05, Kic = 0.07, Kdc = 0.2;
@@ -324,7 +345,7 @@ void comunicacion_spi(Angulos* datos) {
     
     
     //MODO MANUAL
-    ESP_LOGI(TAG, "X:  %.2f", datosParaEnviar.anguloX);
+    //ESP_LOGI(TAG, "X:  %.2f", datosParaEnviar.anguloX);
 
     switch (pantalla_actual)
     {
@@ -655,7 +676,7 @@ void actualizar_seleccion() {
     switch (pantalla_actual)
     {
     case MENU_PRINCIPAL:
-        for (int i = 0; i < 5; i++) {
+        for (int i = 0; i < 6; i++) {
             // Aplica el estilo correspondiente
             if (i == opcion_actual) {
                 lv_obj_add_style(btn_opciones[i], &estilo_focused, 0);
@@ -766,6 +787,32 @@ void actualizar_enc_touch_cb(lv_timer_t * timer) {
 }
 
 
+void actualizar_IK_cb(lv_timer_t * timer){
+    if (label_nx) {
+        char buf_nx[32];
+        snprintf(buf_nx, sizeof(buf_nx), "nx: %.2f", datosIK.nx);
+        lv_label_set_text(label_nx, buf_nx);
+    }
+
+    if (label_ny) {
+        char buf_ny[32];
+        snprintf(buf_ny, sizeof(buf_ny), "ny: %.2f", datosIK.ny);
+        lv_label_set_text(label_ny, buf_ny);
+    }
+
+    if (label_hz) {
+        char buf_hz[32];
+        snprintf(buf_hz, sizeof(buf_hz), "hz: %.2f", datosIK.hz);
+        lv_label_set_text(label_hz, buf_hz);
+    }
+
+    if (label_output) {
+        char buf_out[64];
+        snprintf(buf_out, sizeof(buf_out), "Out: %.0f, %.0f, %.0f", datosIK.IKX, datosIK.IKY, datosIK.IKZ);
+        lv_label_set_text(label_output, buf_out);
+    }
+}
+
 void scroll_event_cb(lv_event_t * e)
 {   
     lv_obj_t * cont = lv_event_get_target(e);
@@ -839,10 +886,11 @@ void lv_mi_menu() {
         "Modo manual",
         "Datos Variables",
         "Graficos",
+        "Cinematica Inversa",
         "Apagar"
     };
 
-    for(int i = 0; i < 5; i++) {
+    for(int i = 0; i < 6; i++) {
         btn_opciones[i] = lv_btn_create(menu_list);
         lv_obj_set_width(btn_opciones[i], lv_pct(100));
         lv_obj_t * label = lv_label_create(btn_opciones[i]);
@@ -1120,7 +1168,7 @@ void mostrar_submenu(int numero, int numero2) {
 
         //Datos variables
         case 3: {
-            datosParaEnviar.var_control = 1;
+            //datosParaEnviar.var_control = 1; //ESTA VARIABLE SE USA PARA EL CONTROL POR VELOCIDAD DE LOS MOTORES, OJO!!
             lv_obj_t* cont = lv_obj_create(sub_scr);
             lv_obj_set_size(cont, 200, 180);
             lv_obj_align(cont, LV_ALIGN_TOP_MID, 0, 10);  // Centrado horizontal, 20 px desde arriba
@@ -1215,8 +1263,71 @@ void mostrar_submenu(int numero, int numero2) {
             break;
         }
         
+        //Cinematica inv
+        case 5: {
+            lv_obj_t* cont = lv_obj_create(sub_scr);
+            lv_obj_set_size(cont, 200, 180);
+            lv_obj_align(cont, LV_ALIGN_TOP_MID, 0, 10);  // Centrado horizontal, 20 px desde arriba
+            lv_obj_set_layout(cont, LV_LAYOUT_FLEX);
+            lv_obj_set_flex_flow(cont, LV_FLEX_FLOW_COLUMN);
+            lv_obj_set_style_pad_row(cont, 6, 0);  // espacio entre filas
+
+
+            lv_obj_set_style_radius(cont, 10, 0);
+          
+            //lv_obj_set_style_border_width(cont, 2, 0);
+            //lv_obj_set_style_border_color(cont, lv_color_hex(0x444444), 0);
+            //lv_obj_set_style_shadow_width(cont, 10, 0);
+            //lv_obj_set_style_shadow_color(cont, lv_color_hex(0xaaaaaa), 0);
+
+
+            lv_obj_set_style_text_font(cont, &lv_font_montserrat_16, 0);
+
+            lv_obj_add_style(cont, &estilo_contenedor_oscuro, 0);
+
+            //INPUT ---- SERIAL
+
+            lv_obj_t * titulo = lv_label_create(cont); 
+            lv_label_set_text(titulo, "Input");
+            lv_obj_set_style_text_font(titulo, &lv_font_montserrat_20, 0);  // Puedes cambiar el tamaño
+            lv_obj_set_style_text_align(titulo, LV_TEXT_ALIGN_CENTER, 0);
+            lv_obj_set_width(titulo, 160);
+
+
+            label_nx = lv_label_create(cont);
+            lv_label_set_text_fmt(label_nx, "nx: %.2f", datosIK.nx);
+
+            label_ny = lv_label_create(cont);
+            lv_label_set_text_fmt(label_ny, "ny: %.2f", datosIK.ny);
+
+            label_hz = lv_label_create(cont);
+            lv_label_set_text_fmt(label_hz, "hz: %.2f", datosIK.hz);
+
+            lv_obj_set_style_pad_bottom(label_hz, 6, 0);  // espacio entre filas
+
+            //OUTPUT ----------- MOTOR
+
+            
+            lv_obj_t * titulo2 = lv_label_create(cont); 
+            lv_label_set_text(titulo2, "Output");
+            lv_obj_set_style_text_font(titulo2, &lv_font_montserrat_20, 0);  // Puedes cambiar el tamaño
+            lv_obj_set_style_text_align(titulo2, LV_TEXT_ALIGN_CENTER, 0);
+            lv_obj_set_width(titulo2, 160);
+
+
+            label_output = lv_label_create(cont);
+            lv_label_set_text_fmt(label_output, "Out: %.0f, %.0f, %.0f", datosIK.IKX, datosIK.IKY, datosIK.IKZ);
+
+            timer_IK = lv_timer_create(actualizar_IK_cb, 100, NULL);
+
+
+            boton_volver(sub_scr);
+            lv_obj_add_style(btn_volver, &estilo_focused, 0);
+            break;
+        }
+
         //apagado
-        case 5:{
+        case 6:{
 
             // Fondo negro
             lv_obj_set_style_bg_color(sub_scr, lv_color_black(), 0); //Pendiente decidir el fondo que se va a usar
@@ -1274,14 +1385,14 @@ void mostrar_submenu(int numero, int numero2) {
 void manejar_menu_principal(const ui_msg_t& msg) {
     switch (msg.cmd) {
         case UI_CMD_NAVIGATE_UP:
-            opcion_actual = (opcion_actual + 4) % 5;
+            opcion_actual = (opcion_actual + 5) % 6;
             //ESP_LOGI(TAG, "NAVIGATE_UP -> opcion_actual: %d\n", opcion_actual);
             actualizar_seleccion();
             lv_obj_scroll_to_view(lv_obj_get_child(menu_list, opcion_actual), LV_ANIM_ON);
             lv_event_send(menu_list, LV_EVENT_SCROLL, NULL);
             break;
         case UI_CMD_NAVIGATE_DOWN:
-            opcion_actual = (opcion_actual + 1) % 5;
+            opcion_actual = (opcion_actual + 1) % 6;
             //ESP_LOGI(TAG, "NAVIGATE_DOWN -> opcion_actual: %d\n", opcion_actual);
             actualizar_seleccion();
             lv_obj_scroll_to_view(lv_obj_get_child(menu_list, opcion_actual), LV_ANIM_ON);
@@ -1384,11 +1495,18 @@ void manejar_modo_manual(const ui_msg_t& msg){
 void manejar_datos_variables(const ui_msg_t& msg){
     switch (msg.cmd) {
         case UI_CMD_NAVIGATE_RIGHT:
-            datosParaEnviar.anguloX += 5; //quitar
+            
+            datosParaEnviar.anguloX = 45;
+            datosParaEnviar.anguloY = 45;
+            datosParaEnviar.anguloZ = 45;
+            //datosParaEnviar.anguloX += 5; //quitar
             break;
 
         case UI_CMD_NAVIGATE_LEFT:
-            datosParaEnviar.anguloX -= 5; //quitar
+            datosParaEnviar.anguloX = 20;
+            datosParaEnviar.anguloY = 20;
+            datosParaEnviar.anguloZ = 20;
+            //datosParaEnviar.anguloX -= 5; //quitar
             break;
 
         case UI_CMD_SELECT:
@@ -1397,7 +1515,7 @@ void manejar_datos_variables(const ui_msg_t& msg){
                 timer_enc_touch = NULL;
                 }
             pantalla_actual = MENU_PRINCIPAL;
-            datosParaEnviar.var_control = 0; //quitar
+            //datosParaEnviar.var_control = 0; //quitar ESTA VARIABLE SE USA PARA EL CONTROL POR VELOCIDAD DE LOS MOTORES, OJO!!
             datosParaEnviar.anguloX = 0; //quitar
             datosParaEnviar.anguloY = 0; //quitar
             datosParaEnviar.anguloZ = 0; //quitar
@@ -1407,6 +1525,7 @@ void manejar_datos_variables(const ui_msg_t& msg){
             break;
         }
 }
+
 
 void manejar_graficas(const ui_msg_t& msg){
 
@@ -1452,6 +1571,28 @@ void manejar_graficas(const ui_msg_t& msg){
 }
 
 
+void manejar_cinematica_inversa(const ui_msg_t& msg){
+    switch (msg.cmd) {
+
+
+        case UI_CMD_SELECT:
+            if (timer_IK != NULL) {
+                lv_timer_del(timer_IK);
+                timer_IK = NULL;
+            }
+            datosParaEnviar.anguloX = 0;
+            datosParaEnviar.anguloY = 0;
+            datosParaEnviar.anguloZ = 0;
+            pantalla_actual = MENU_PRINCIPAL;
+            lv_mi_menu();
+            break;
+
+        default:
+            break;
+        }
+}
+
+
 void manejar_apagado(const ui_msg_t& msg){
     switch (msg.cmd) {
         case UI_CMD_SELECT:
@@ -1483,6 +1624,9 @@ void procesar_ui_msg(const ui_msg_t& msg) {
             break;
         case GRAFICAS:
             manejar_graficas(msg);
+            break;
+        case CINEMATICAINVERSA:
+            manejar_cinematica_inversa(msg);
             break;
         case APAGADO:
             manejar_apagado(msg);
@@ -1548,80 +1692,143 @@ float PID(float setpoint, float measured, float dt, float Kpin, float Kdin, floa
 
 
 
-void pid_task(void *pvParameters) {
+void ControlTask(void *pvParameters) {
     const TickType_t xDelay = pdMS_TO_TICKS(50);
     float setpoint = 500; // valor deseado del sensor touch (ajustar)
 
 
-        // Definir los límites de salida del PID
+    // Definir los límites de salida del PID
     float pid_output_min = -330;  // Mínimo valor esperado del PID
     float pid_output_max =  330;   // Máximo valor esperado del PID
     float output_min = 0;          // Mínimo valor después del mapeo
     float output_max = 90;        // Máximo valor después del mapeo
 
-    while (true) {
-        uint16_t measured = datos_display.touchY;
-        uint16_t inverted_value = 900 - measured;
-        switch(metodo_control_sw){
-            case 0:
-                if(pantalla_actual == METODO_CONTROL) reset_motor_pos();
-                break;
-            // PID
-            case 1: {
-                float output = PID(setpoint, (float)inverted_value, 0.05, Kpa, Kda, Kia); // dt = 50 ms = 0.05 s
-                output = map_output(output,pid_output_min,pid_output_max,output_min,output_max);
-                datosParaEnviar.anguloY = output;
 
-                ESP_LOGI(TAG, "output %f\n", output);
+    // Asegúrate de tener el Serial inicializado
+    String inputString;
+    // Datos deseados
+    double hz = 3.0;
+    double nx = 0.0;
+    double ny = 0.0;
+    datosIK.nx = nx;
+    datosIK.ny = ny;
+    datosIK.hz = hz;
+
+
+
+
+    while (true) {
+        switch (pantalla_actual) {
             
+            case METODO_CONTROL: {
+
+                uint16_t measured = datos_display.touchY;
+                uint16_t inverted_value = 900 - measured;
+                switch(metodo_control_sw){
+                    case 0:
+                        reset_motor_pos();
+                        break;
+                    // PID
+                    case 1: {
+                        float output = PID(setpoint, (float)inverted_value, 0.05, Kpa, Kda, Kia); // dt = 50 ms = 0.05 s
+                        output = map_output(output,pid_output_min,pid_output_max,output_min,output_max);
+                        datosParaEnviar.anguloY = output;
+                        ESP_LOGI(TAG, "output %f\n", output);
+                        break;
+                    }
+
+                    default:
+                        break;
+                }
                 break;
             }
 
+            case CINEMATICAINVERSA: {
+                
+                //PULGADAS
+                //Mínimo práctico: 2.34 
+                //Máximo práctico: 4.11
+
+                //Mínimo teórico: 1
+                //Máximo teórico: 4
+
+                //Max nx = 0.4
+                //Max ny = 0.4
+            
+                // Si hay datos disponibles en el puerto serie
+                if (Serial.available()) {
+                    inputString = Serial.readStringUntil('\n');  // lee hasta salto de línea
+                    inputString.trim();                          // quita espacios
+                    
+                    // divide por comas
+                    int firstComma = inputString.indexOf(',');
+                    int secondComma = inputString.indexOf(',', firstComma + 1);
+
+                    if (firstComma > 0 && secondComma > 0) {
+                        String nxStr = inputString.substring(0, firstComma);
+                        String nyStr = inputString.substring(firstComma + 1, secondComma);
+                        String hzStr = inputString.substring(secondComma + 1);
+
+                        nx = nxStr.toDouble();
+                        ny = nyStr.toDouble();
+                        hz = hzStr.toDouble();
+
+                        // guarda también en datosIK si quieres
+                        datosIK.nx = nx;
+                        datosIK.ny = ny;
+                        datosIK.hz = hz;
+
+                        Serial.printf("Recibido nx=%.3f ny=%.3f hz=%.3f\n", nx, ny, hz);
+                    }
+                }
+
+                double thetaA = machine.theta(LINK_A, hz, nx, ny);
+                double thetaB = machine.theta(LINK_B, hz, nx, ny);
+                double thetaC = machine.theta(LINK_C, hz, nx, ny);
+
+                // Muestra resultados por el puerto serie (si tienes Serial inicializado)
+                
+                //TRANSFORMACIONNNN
+                
+                thetaA = ((5.0*M_PI)/ 4.0) - thetaA; // 5pi/4 - ang = anggunew
+                thetaB = ((5.0*M_PI)/ 4.0) - thetaB;
+                thetaC = ((5.0*M_PI)/ 4.0) - thetaC;
+                
+                thetaB = thetaB * (180.0 / M_PI);
+                thetaA = thetaA * (180.0 / M_PI);
+                thetaC = thetaC * (180.0 / M_PI);
+
+                datosIK.IKX = thetaB; 
+                datosIK.IKY = thetaA; 
+                datosIK.IKZ = thetaC; 
+                
+                //printf("Theta A: %.5f\n", thetaA);
+                //printf("Theta B: %.5f\n", thetaB);
+                //printf("Theta C: %.5f\n", thetaC);
+                
+                // Envía los ángulos a los motores
+                datosParaEnviar.anguloX = datosIK.IKX;
+                datosParaEnviar.anguloY = datosIK.IKY;
+                datosParaEnviar.anguloZ = datosIK.IKZ;
+
+                break;
+            }
+
+
+
             default:
                 break;
+
         }
+
+            
 
         vTaskDelay(xDelay);
-        
+            
     }
 }
 
-/*
-void pid_task(void *pvParameters) {
-    const TickType_t xDelay = pdMS_TO_TICKS(50);
-    float setpointX = 400, setpointY = 400;
 
-    while (true) {
-        switch(metodo_control_sw){
-            case 0:
-                if(pantalla_actual == METODO_CONTROL) reset_motor_pos();
-                break;
-            // PID
-            case 1: {
-                float x = datos_display.touchX;
-                float y = datos_display.touchY;
-
-                float errorX = setpointX - x;
-                float errorY = setpointY - y;
-
-                float error_A = errorY;  // Motor A controla eje Y
-                float error_B = (-errorX + errorY) / 1.4142; // Motor B: diagonal
-                float error_C = (errorX + errorY) / 1.4142; // Motor C: diagonal
-
-                float outA = PID(0, error_A, 0.05, Kpa, Kda, Kia);
-                float outB = PID(0, error_B, 0.05, Kpb, Kdb, Kib);
-                float outC = PID(0, error_C, 0.05, Kpc, Kdc, Kic);
-
-                datosParaEnviar.anguloY = map_output(outA, -330, 330, 0, 90);
-                datosParaEnviar.anguloX = map_output(outB, -330, 330, 0, 90); // ejemplo
-                datosParaEnviar.anguloZ = map_output(outC, -330, 330, 0, 90);
-
-                vTaskDelay(xDelay);
-        }
-    }
-    }
-}
-*/
 
 
 #if DEBUG_RENDIMIENTO
@@ -1662,7 +1869,7 @@ extern "C" void app_main(void) {
 
     if (xSemaphoreTake(xGuiSemaphore, portMAX_DELAY)) {
         pantalla_actual = APAGADO;
-        mostrar_submenu(5, 1); //Menu apagado
+        mostrar_submenu(6, 1); //Menu apagado
         xSemaphoreGive(xGuiSemaphore);
 
     }
@@ -1676,7 +1883,7 @@ extern "C" void app_main(void) {
     
     xTaskCreate(tarea_spi, "TareaSPI", 2048, NULL, 1, NULL);
 
-    xTaskCreate(pid_task, "PID Control", 2048, NULL, 1, NULL);
+    xTaskCreate(ControlTask, "ControlTask", 4096, NULL, 1, NULL);
 
 
 
@@ -1684,6 +1891,7 @@ extern "C" void app_main(void) {
     xTaskCreate(rendimiento, "RendimientoESP", 2048, NULL, 1, NULL);
     #endif
 
+    Serial.begin(115200); 
 
     
     while (1) {
