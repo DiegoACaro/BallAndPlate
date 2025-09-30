@@ -9,9 +9,28 @@ DESIRED POS: X = 650; Y = 650 aprox
 Tanto como la pantalla como los encoders retornan valores enteros, uno long y otro int
 */
 
+volatile bool stepEnableX = false;
+volatile bool stepEnableY = false;
+volatile bool stepEnableZ = false; 
+
+const float TOLX = 0.5;
+const float TOLY = 0.5;
+const float TOLZ = 0.5;
+
+const int Max_Vel = 8000; // Velocidad máxima en pasos por segundo (aprox 8000)
+
+// --- PID ---
+float Kp = 200;
+float Ki = 10;
+float Kd = 2;
+
+float errorPrevX = 0, errorPrevY = 0, errorPrevZ = 0;
+float integralX = 0, integralY = 0, integralZ = 0;
+
+
 #define MOTORES_HABILITADOS 1
-#define ACELERACION 0
 #define TIMER2ACT 0
+#define USINGMACROS 1
 
 // === SPI Estructuras ===
 struct Angulos {
@@ -65,10 +84,38 @@ volatile float targetZ = 0;
 #define stepPinZ    46
 #define enablePinZ  62
 
-#if ACELERACION
-const uint16_t MIN_OCRnA = 3999;   // velocidad máxima (250 µs)
-const uint16_t MAX_OCRnA = 7999;  // velocidad mínima (500 µs)
-#endif
+//MACROS --------------------------
+// === MOTOR X ===
+#define DIRX_PORT  PORTF
+#define DIRX_BIT   PF1    // pin 55
+#define STEPX_PORT PORTF
+#define STEPX_BIT  PF0    // pin 54
+#define ENX_PORT   PORTD
+#define ENX_BIT    PD7    // pin 38
+
+// === MOTOR Y ===
+#define DIRY_PORT  PORTF
+#define DIRY_BIT   PF7    // pin 61
+#define STEPY_PORT PORTF
+#define STEPY_BIT  PF6    // pin 60
+#define ENY_PORT   PORTF
+#define ENY_BIT    PF2    // pin 56
+
+// === MOTOR Z ===
+#define DIRZ_PORT  PORTL
+#define DIRZ_BIT   PL1    // pin 48
+#define STEPZ_PORT PORTL
+#define STEPZ_BIT  PL3    // pin 46
+#define ENZ_PORT   PORTK
+#define ENZ_BIT    PK0    // pin 62
+
+
+// =================== Variables SPI ===================
+
+volatile byte bufferSPI[sizeof(Angulos)];
+volatile size_t idxSPI = 0;
+volatile bool spi_interrupted = false;
+
 
 // === Encoders ===
 // Motor X: D2 y D3
@@ -95,22 +142,18 @@ A5,A12
 A10,A11
 */
 
-#define XP A12 
-#define XM A5
-#define YP A11 
-#define YM A10 
+#define XP A5 
+#define XM A12
+#define YP A10 
+#define YM A11 
 
 // =================== Variables ===================
-volatile float posX = 0, posY = 0, posZ = 0;
 int touchX = 0, touchY = 0;
 
-
+volatile float posX = 0, posY = 0, posZ = 0;
 volatile bool dirX,dirY,dirZ; //true sube, false baja
-
 volatile bool touch = false;
-int detect_touch_filter = 0;
 
-unsigned long lastDebounceTime = 0;
 
 void configurarTimersMotores() {
 
@@ -125,7 +168,7 @@ void configurarTimersMotores() {
   TCCR1A = 0;
   TCCR1B = 0;
   TCNT1 = 0;
-  OCR1A = 3999; // 0.375 ms aprox
+  OCR1A = 3500; // 0.375 ms aprox
   TCCR1B |= (1 << WGM12); // Modo CTC
   TCCR1B |= (1 << CS10);  // Prescaler 1
   TIMSK1 |= (1 << OCIE1A); // Habilita interrupción
@@ -134,7 +177,7 @@ void configurarTimersMotores() {
   TCCR3A = 0;
   TCCR3B = 0;
   TCNT3 = 0;
-  OCR3A = 3999;
+  OCR3A = 3500;
   TCCR3B |= (1 << WGM32);
   TCCR3B |= (1 << CS30);
   TIMSK3 |= (1 << OCIE3A);
@@ -143,7 +186,7 @@ void configurarTimersMotores() {
   TCCR4A = 0;
   TCCR4B = 0;
   TCNT4 = 0;
-  OCR4A = 3999;
+  OCR4A = 3500;
   TCCR4B |= (1 << WGM42);
   TCCR4B |= (1 << CS40);
   TIMSK4 |= (1 << OCIE4A);
@@ -154,6 +197,8 @@ void configurarTimersMotores() {
 
 
 void setup() {
+
+  Serial.begin(115200);
 
 
   pinMode(dirPinX, OUTPUT);
@@ -167,6 +212,7 @@ void setup() {
   pinMode(dirPinZ, OUTPUT);
   pinMode(stepPinZ, OUTPUT);
   pinMode(enablePinZ, OUTPUT);
+  
 
   #if MOTORES_HABILITADOS
   digitalWrite(enablePinX, LOW); // Habilitar motor (LOW normalmente lo habilita)
@@ -181,6 +227,7 @@ void setup() {
   digitalWrite(dirPinX, HIGH); // o LOW según dirección deseada
   digitalWrite(dirPinY, HIGH);
   digitalWrite(dirPinZ, HIGH);
+  
   dirX = true, dirY = true, dirZ = true;
 
 
@@ -212,6 +259,7 @@ void setup() {
   SPDR = 0x00;
 
 
+
 }
 
 
@@ -225,239 +273,162 @@ float encoderToDegrees(long counts) {
 // ==================================================== M O T O R E S ===========================================000
 
 
-#if ACELERACION
-
-const float DISTANCIA_MIN = 0.5;   // dentro de tolerancia, no moverse
-const float DISTANCIA_MAX = 10.0;  // error grande = máxima velocidad
-
-// Mapea distancia al OCRnA (velocidad inversa)
-uint16_t calcularOCR(float distancia) {
-  if (distancia <= DISTANCIA_MIN) return MAX_OCRnA;  // se mueve muy lento o se detiene
-  if (distancia >= DISTANCIA_MAX) return MIN_OCRnA;  // velocidad máxima
-
-  // Escalado inverso lineal entre MAX_OCR1A y MIN_OCR1A
-  return map(distancia * 100, DISTANCIA_MIN * 100, DISTANCIA_MAX * 100, MAX_OCRnA, MIN_OCRnA);
-}
-
-#endif
-
-
 
 // ---------- MOTOR X --------------
 
+#if USINGMACROS
 
+// --- ISR para motor X (Timer1) ---
 ISR(TIMER1_COMPA_vect) {
   static bool flancoX = false;
 
-  posX = encoderToDegrees(encoderX.read());
-  if (posX < 0) posX = 0;
+  if (!stepEnableX) {
+    // Si no hay movimiento deseado, aseguramos STEP en LOW
+    STEPX_PORT &= ~(1 << STEPX_BIT);   // LOW
+    flancoX = false;
+    return;
+  }
 
-  const float TOL = 2;
-  const float HYST = 0.5;
-
-  if (var_control == 0) {
-    // ------ MODO POSICIÓN ------
-    if (abs(posX - targetX) <= TOL) return;
-
-    if (flancoX) {
-      digitalWrite(stepPinX, LOW);
-    } else {
-      if (abs(posX - targetX) > (TOL + HYST)) {
-        dirX = (targetX > posX);
-      }
-      digitalWrite(dirPinX, dirX ? HIGH : LOW);
-      digitalWrite(stepPinX, HIGH);
-    }
-
+  if (flancoX) {
+    // Flanco bajo STEP
+    STEPX_PORT &= ~(1 << STEPX_BIT);   // LOW
   } else {
-    // ------ MODO VELOCIDAD ------
-    // En este modo, targetX representa la velocidad deseada (°/s)
-    // Puedes usar su signo para dirección
-    if ((posX > 90 && targetX > 0) || (posX < 5 && targetX < 0)) return;
-    if (targetX == 0) return;
+    // Antes del flanco alto fijamos la dirección
+    if (dirX) DIRX_PORT |= (1 << DIRX_BIT);   // HIGH
+    else      DIRX_PORT &= ~(1 << DIRX_BIT);  // LOW
 
-    dirX = (targetX > 0);
-    digitalWrite(dirPinX, dirX ? HIGH : LOW);
-
-    if (flancoX) {
-      digitalWrite(stepPinX, LOW);
-    } else {
-      digitalWrite(stepPinX, HIGH);
-    }
-
-    // Podrías ajustar la frecuencia del timer (OCR1A) en otro lugar del código
-    // para que se relacione con la magnitud de targetX (velocidad deseada)
+    STEPX_PORT |= (1 << STEPX_BIT);           // HIGH
   }
 
   flancoX = !flancoX;
 }
 
+#else
 
-// ISR(TIMER1_COMPA_vect) {
-//   static bool flancoX = false;
-//   posX = encoderToDegrees(encoderX.read());
-//   if (posX < 0) posX = 0;
-  
-//   const float TOL = 2;
-//   const float HYST = 0.5;
-  
-//   if (abs(posX - targetX) <= TOL) return;
+ISR(TIMER1_COMPA_vect) {
+  static bool flancoX = false;
 
-//   if (flancoX) {
-//     digitalWrite(stepPinX, LOW);
-//   } else {
-//     if (abs(posX - targetX) > (TOL + HYST)) {
-//       dirX = (targetX > posX);
-//     }
-//     digitalWrite(dirPinX, dirX ? HIGH : LOW);
-//     digitalWrite(stepPinX, HIGH);
+  if (!stepEnableX) {   // si no hay que mover
+    digitalWrite(stepPinX, LOW);
+    flancoX = false;
+    return;
+  }
 
-//   }
-//   flancoX = !flancoX;
-// }
+  if (flancoX) {
+    digitalWrite(stepPinX, LOW);
+  } else {
+    // fijar dirección según bandera global
+    digitalWrite(dirPinX, dirX ? HIGH : LOW);
+    digitalWrite(stepPinX, HIGH);
+  }
+  flancoX = !flancoX;
+}
 
-
+#endif
 
 // ---------- MOTOR Y --------------
 
+#if USINGMACROS
+
+
+// --- ISR para motor Y (Timer3) ---
 ISR(TIMER3_COMPA_vect) {
   static bool flancoY = false;
 
-  posY = encoderToDegrees(encoderY.read());
-  if (posY < 0) posY = 0;
+  if (!stepEnableY) {
+    // Si no hay movimiento deseado, aseguramos STEP en LOW
+    STEPY_PORT &= ~(1 << STEPY_BIT);   // LOW
+    flancoY = false;
+    return;
+  }
 
-  const float TOL = 2;
-  const float HYST = 0.3;
-
-  if (var_control == 0) {
-    // ------ MODO POSICIÓN ------
-    if (abs(posY - targetY) <= TOL) return;
-
-    if (flancoY) {
-      digitalWrite(stepPinY, LOW);
-    } else {
-      if (abs(posY - targetY) > (TOL + HYST)) {
-        dirY = (targetY > posY);
-      }
-      digitalWrite(dirPinY, dirY ? HIGH : LOW);
-      digitalWrite(stepPinY, HIGH);
-    }
-
+  if (flancoY) {
+    // Flanco bajo STEP
+    STEPY_PORT &= ~(1 << STEPY_BIT);   // LOW
   } else {
-    // ------ MODO VELOCIDAD ------
+    // Antes del flanco alto fijamos la dirección
+    if (dirY) DIRY_PORT |= (1 << DIRY_BIT);   // HIGH
+    else      DIRY_PORT &= ~(1 << DIRY_BIT);  // LOW
 
-    if ((posY > 90 && targetY > 0) || (posY < 5 && targetY < 0)) return;
-    if (targetY == 0) return;
-
-    dirY = (targetY > 0);
-    digitalWrite(dirPinY, dirY ? HIGH : LOW);
-
-    if (flancoY) {
-      digitalWrite(stepPinY, LOW);
-    } else {
-      digitalWrite(stepPinY, HIGH);
-    }
+    STEPY_PORT |= (1 << STEPY_BIT);           // HIGH
   }
 
   flancoY = !flancoY;
 }
 
+#else
 
-// ISR(TIMER3_COMPA_vect) {
-//   static bool flancoY = false;
-//   posY = encoderToDegrees(encoderY.read());
-//   if (posY < 0) posY = 0;
+ISR(TIMER3_COMPA_vect) {
+  static bool flancoY = false;
 
-//   const float TOL = 2;
-//   const float HYST = 0.3;
+  if (!stepEnableY) {
+    digitalWrite(stepPinY, LOW);
+    flancoY = false;
+    return;
+  }
 
-//   if (abs(posY - targetY) <= TOL) return;
+  if (flancoY) {
+    digitalWrite(stepPinY, LOW);
+  } else {
+    digitalWrite(dirPinY, dirY ? HIGH : LOW);
+    digitalWrite(stepPinY, HIGH);
+  }
+  flancoY = !flancoY;
+}
 
-//   if (flancoY) {
-//     digitalWrite(stepPinY, LOW);
-//   } else {
-//     if (abs(posY - targetY) > (TOL + HYST)) {
-//       dirY = (targetY > posY);
-//     }
-//     digitalWrite(dirPinY, dirY ? HIGH : LOW);
-//     digitalWrite(stepPinY, HIGH);
-
-//   }
-//   flancoY = !flancoY;
-// }
-
+#endif
 
 // ---------- MOTOR Z --------------
 
+#if USINGMACROS
 
 ISR(TIMER4_COMPA_vect) {
   static bool flancoZ = false;
 
-  posZ = encoderToDegrees(encoderZ.read());
-  if (posZ < 0) posZ = 0;
+  if (!stepEnableZ) {
+    // Si no hay movimiento deseado, aseguramos STEP en LOW
+    STEPZ_PORT &= ~(1 << STEPZ_BIT);   // LOW
+    flancoZ = false;
+    return;
+  }
 
-  const float TOL = 2;
-  const float HYST = 0.5;
-
-  if (var_control == 0) {
-    // ------ MODO POSICIÓN ------
-    if (abs(posZ - targetZ) <= TOL) return;
-
-    if (flancoZ) {
-      digitalWrite(stepPinZ, LOW);
-    } else {
-      if (abs(posZ - targetZ) > (TOL + HYST)) {
-        dirZ = (targetZ > posZ);
-      }
-      digitalWrite(dirPinZ, dirZ ? HIGH : LOW);
-      digitalWrite(stepPinZ, HIGH);
-    }
-
+  if (flancoZ) {
+    // Flanco bajo STEP
+    STEPZ_PORT &= ~(1 << STEPZ_BIT);   // LOW
   } else {
-    // ------ MODO VELOCIDAD ------
+    // Antes del flanco alto fijamos la dirección
+    if (dirZ) DIRZ_PORT |= (1 << DIRZ_BIT);   // HIGH
+    else      DIRZ_PORT &= ~(1 << DIRZ_BIT);  // LOW
 
-    if ((posZ > 90 && targetZ > 0) || (posZ < 5 && targetZ < 0)) return;
-    if (targetZ == 0) return;
-
-    dirZ = (targetZ > 0);
-    digitalWrite(dirPinZ, dirZ ? HIGH : LOW);
-
-    if (flancoZ) {
-      digitalWrite(stepPinZ, LOW);
-    } else {
-      digitalWrite(stepPinZ, HIGH);
-    }
+    STEPZ_PORT |= (1 << STEPZ_BIT);           // HIGH
   }
 
   flancoZ = !flancoZ;
 }
 
 
-// ISR(TIMER4_COMPA_vect) {
-//   static bool flancoZ = false;
-//   posZ = encoderToDegrees(encoderZ.read());
-//   if (posZ < 0) posZ = 0;
 
-//   const float TOL = 2;
-//   const float HYST = 0.5;
+#else
+ISR(TIMER4_COMPA_vect) {
+  static bool flancoZ = false;
+  if (!stepEnableZ) {
+    // si no hay movimiento deseado, asegúrate de poner STEP en LOW
+    digitalWrite(stepPinZ, LOW);
+    flancoZ = false;
+    return;
+  }
+  if (flancoZ) {
+    // Bajar STEP
+    digitalWrite(stepPinZ, LOW);
+  } else {
+    // Antes del flanco alto fijamos la dirección
+    digitalWrite(dirPinZ, dirZ ? HIGH : LOW);
+    digitalWrite(stepPinZ, HIGH);
+  }
+  flancoZ = !flancoZ;
+}
 
-//   if (abs(posZ - targetZ) <= TOL) return;
-
-//   if (flancoZ) {
-//     digitalWrite(stepPinZ, LOW);
-//   } else {
-//     if (abs(posZ - targetZ) > (TOL + HYST)) {
-//       dirZ = (targetZ > posZ);
-//     }
-//     digitalWrite(dirPinZ, dirZ ? HIGH : LOW);
-//     digitalWrite(stepPinZ, HIGH);
-
-//   }
-//   flancoZ = !flancoZ;
-// }
-
-
-
+#endif
 
 // =============================== SPI ISR ====================
 
@@ -492,6 +463,8 @@ ISR(SPI_STC_vect) {
     SPDR = 0x00;
   }
 }
+
+
 
 // =========================  T O U C H S C R E E N =================================================
 
@@ -595,30 +568,38 @@ void touchscreen() {
 void loop() {
 
   touchscreen();
-
+  
   //PRIMER FILTRO
-  static float targetFiltroX = 0, targetFiltroY = 0, targetFiltroZ = 0;
+  //static float targetFiltroX = 0, targetFiltroY = 0, targetFiltroZ = 0;
   const float alpha = 0.7;
+  
+  posX = encoderToDegrees(encoderX.read());
+  posY = encoderToDegrees(encoderY.read());
+  posZ = encoderToDegrees(encoderZ.read());
 
 
   if (datoCompleto) {
-
+    
     respuesta.touchX = touchX;
     respuesta.touchY = touchY;
-    respuesta.encoderX = (encoderToDegrees(encoderX.read()));
-    respuesta.encoderY = (encoderToDegrees(encoderY.read()));
-    respuesta.encoderZ = (encoderToDegrees(encoderZ.read()));
+    respuesta.encoderX = posX;
+    respuesta.encoderY = posY;
+    respuesta.encoderZ = posZ;
+    
     datoCompleto = false;
-
+    
     apagado = datosRecibidos.apagado;
     var_control = datosRecibidos.var_c;
-
-    //PRIMER FILTRO
-    targetFiltroX = (1 - alpha) * targetFiltroX + alpha * datosRecibidos.angX;
-    targetFiltroY = (1 - alpha) * targetFiltroY + alpha * datosRecibidos.angY;
-    targetFiltroZ = (1 - alpha) * targetFiltroZ + alpha * datosRecibidos.angZ;
-  }
     
+    targetX = datosRecibidos.angX;
+    targetY = datosRecibidos.angY;
+    targetZ = datosRecibidos.angZ;
+    
+  }
+
+
+
+
 
   //LOGICA DE APAGADO
   if (apagado) {
@@ -644,20 +625,94 @@ void loop() {
 
 
   //PRIMER FILTRO
-  targetX = targetFiltroX;
-  targetY = targetFiltroY;
-  targetZ = targetFiltroZ;
-
-  #if ACELERACION
-  if (abs(posX - targetX) > 10) OCR1A = calcularOCR(abs(posX - targetX));
-  else OCR1A = 5999;
-  if (abs(posY - targetY) > 10) OCR3A = calcularOCR(abs(posY - targetY));
-  else OCR3A = 5999;
-  if (abs(posZ - targetZ) > 10) OCR4A = calcularOCR(abs(posZ - targetZ));
-  else OCR4A = 5999;
-  #endif
+  targetX = (1 - alpha) * targetX + alpha * targetX;
+  targetY = (1 - alpha) * targetY + alpha * targetY;
+  targetZ = (1 - alpha) * targetZ + alpha * targetZ;  
+  
 
 
+  static unsigned long last = 0;
+
+  if (millis() - last >= 10) {  // cada 2 ms aprox
+    last = millis();
+
+
+    // ============================= Motor X ============================
+    //posX = encoderToDegrees(encoderX.read());
+    if (posX < 0) posX = 0;
+
+    float errorX = targetX - posX;
+
+    integralX += errorX * 0.002;  // dt=2ms
+    float derivativeX = (errorX - errorPrevX)/0.002;
+    float salidaX = Kp*errorX + Ki*integralX + Kd*derivativeX;
+    errorPrevX = errorX;
+
+    float velStepsX = fabs(salidaX);
+    if (velStepsX < 1) velStepsX = 1;
+    if (velStepsX > Max_Vel) velStepsX = Max_Vel;
+
+    dirX = (salidaX > 0);
+    stepEnableX = (abs(errorX) > TOLX);
+
+    uint16_t ocrX = F_CPU / (2 * 1 * velStepsX);
+    noInterrupts();
+    OCR1A = ocrX;   // Timer1 controla motor X
+    interrupts();
+
+
+    // ================================== Motor Y ==============================
+    //posY = encoderToDegrees(encoderY.read());
+    if (posY < 0) posY = 0;
+
+    float errorY = targetY - posY;
+
+    integralY += errorY * 0.002;
+    float derivativeY = (errorY - errorPrevY)/0.002;
+    float salidaY = Kp*errorY + Ki*integralY + Kd*derivativeY;
+    errorPrevY = errorY;
+
+    float velStepsY = fabs(salidaY);
+    if (velStepsY < 1) velStepsY = 1;
+    if (velStepsY > Max_Vel) velStepsY = Max_Vel;
+
+    dirY = (salidaY > 0);
+    stepEnableY = (abs(errorY) > TOLY);
+
+    uint16_t ocrY = F_CPU / (2 * 1 * velStepsY);
+    noInterrupts();
+    OCR3A = ocrY;   // Timer3 controla motor Y
+    interrupts();
+
+
+    // ============================ Motor Z =============================
+
+    //posZ = encoderToDegrees(encoderZ.read());
+    if (posZ < 0) posZ = 0;
+
+    float errorZ = targetZ - posZ;
+
+    integralZ += errorZ * 0.002;
+    float derivativeZ = (errorZ - errorPrevZ)/0.002;
+    float salidaZ = Kp*errorZ + Ki*integralZ + Kd*derivativeZ;
+    errorPrevZ = errorZ;
+
+    float velStepsZ = fabs(salidaZ);
+    if (velStepsZ < 1) velStepsZ = 1;
+    if (velStepsZ > Max_Vel) velStepsZ = Max_Vel;
+    
+    
+    dirZ = (salidaZ > 0);
+    stepEnableZ = (abs(errorZ) > TOLZ);
+    
+    uint16_t ocrZ = F_CPU / (2 * 1 * velStepsZ);
+    noInterrupts();
+    OCR4A = ocrZ;   // Timer4 controla motor Z
+    interrupts();
+
+
+
+  }
 
 
 }
