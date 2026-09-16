@@ -6,6 +6,10 @@
 [![Arduino](https://img.shields.io/badge/Arduino-Embedded%20Control-00979D?logo=arduino)](https://www.arduino.cc/)
 [![SolidWorks](https://img.shields.io/badge/SolidWorks-Mechanical%20Design-red)](https://www.solidworks.com/)
 
+<p align="center">
+  <img src="media/videos/VID_20251201_165611.gif" alt="Ball and Plate platform demo" width="600">
+</p>
+
 ## Overview
 
 This project presents the design and experimental implementation of a **Ball and Plate system** developed as a platform for studying and comparing different control approaches.
@@ -178,6 +182,22 @@ The experiments also included reference trajectories with different geometries, 
 
 The reported experimental results show that the discrete LQR achieved shorter settling times, while the biologically inspired controller exhibited lower overshoot on the X axis.
 
+### Trajectory Tracking Gallery
+
+For each reference trajectory, the platform's video response is shown alongside the tracked ball trajectory.
+
+| Ellipse | Square | Infinity |
+|:---:|:---:|:---:|
+| <img src="media/images/Elipse.png" width="220"><br><img src="media/videos/ElipseVideo.gif" width="220"><br><img src="media/videos/ElipseTrayectoria.gif" width="220"> | <img src="media/images/CuadradoFoto.png" width="220"><br><img src="media/videos/CuadradoVideo.gif" width="220"><br><img src="media/videos/CuadradoTrayectoria.gif" width="220"> | <img src="media/images/infinitofoto.png" width="220"><br><img src="media/videos/InfinitoVideo.gif" width="220"><br><img src="media/videos/InfinitoTrayectoria.gif" width="220"> |
+
+*Top: reference setup photo · Middle: platform response video · Bottom: recorded ball trajectory*
+
+### Controller Demonstrations
+
+| Neural Controller | Follower / Tracking Demo |
+|:---:|:---:|
+| <img src="media/videos/RedVideo.gif" width="300"> | <img src="media/videos/SeguidorVideo.gif" width="300"> |
+
 ## Technologies
 
 ### Control & Modeling
@@ -258,7 +278,22 @@ ball-and-plate/
 │
 └── media/
     ├── images/
+    │   ├── c0138d72-b39d-4c18-a39f-81133ad02738.png
+    │   ├── CuadradoFoto.png
+    │   ├── Elipse.png
+    │   ├── infinitofoto.png
+    │   └── tesisens.jpg
+    │
     └── videos/
+        ├── CuadradoTrayectoria.gif
+        ├── CuadradoVideo.gif
+        ├── ElipseTrayectoria.gif
+        ├── ElipseVideo.gif
+        ├── InfinitoTrayectoria.gif
+        ├── InfinitoVideo.gif
+        ├── RedVideo.gif
+        ├── SeguidorVideo.gif
+        └── VID_20251201_165611.gif
 ```
 
 > The structure above is a recommended organization for the repository. It should be adjusted to match the actual files included in the project.
