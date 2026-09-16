@@ -254,15 +254,12 @@ The thesis also documents a graphical user interface (GUI) for interaction with 
 
 ## Repository Structure
 
-A suggested repository organization is:
-
 ```text
 ball-and-plate/
 │
 ├── README.md
 ├── docs/
 │   ├── thesis.pdf
-│   ├── mechanical/
 │   ├── electronics/
 │   └── diagrams/
 │
@@ -278,22 +275,8 @@ ball-and-plate/
 │
 └── media/
     ├── images/
-    │   ├── c0138d72-b39d-4c18-a39f-81133ad02738.png
-    │   ├── CuadradoFoto.png
-    │   ├── Elipse.png
-    │   ├── infinitofoto.png
-    │   └── tesisens.jpg
-    │
     └── videos/
-        ├── CuadradoTrayectoria.gif
-        ├── CuadradoVideo.gif
-        ├── ElipseTrayectoria.gif
-        ├── ElipseVideo.gif
-        ├── InfinitoTrayectoria.gif
-        ├── InfinitoVideo.gif
-        ├── RedVideo.gif
-        ├── SeguidorVideo.gif
-        └── VID_20251201_165611.gif
+
 ```
 
 > The structure above is a recommended organization for the repository. It should be adjusted to match the actual files included in the project.
